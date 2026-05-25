@@ -17,7 +17,7 @@ func TestProbeDefaultsFormValue(t *testing.T) {
 	form.fields[0].value = "60"
 	form.fields[1].value = "3"
 	form.fields[2].value = "10"
-	form.fields[3].value = "1"
+	form.fields[3].value = "0"
 	form.fields[4].value = "true"
 
 	value, err := form.value()
@@ -33,8 +33,8 @@ func TestProbeDefaultsFormValue(t *testing.T) {
 	if value.sampleCount != 10 {
 		t.Fatalf("sampleCount = %d, want 10", value.sampleCount)
 	}
-	if value.sampleInterval != time.Second {
-		t.Fatalf("sampleInterval = %s, want 1s", value.sampleInterval)
+	if value.sampleInterval != 0 {
+		t.Fatalf("sampleInterval = %s, want 0s", value.sampleInterval)
 	}
 	if !value.applyExisting {
 		t.Fatal("applyExisting = false, want true")

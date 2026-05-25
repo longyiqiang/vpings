@@ -51,6 +51,7 @@ r               run enabled probes now
 up/down         select a probe in the result view
 enter/esc       open or close a probe detail view
 n/e/d/space     create, edit, delete, enable/disable probes
+g               edit probe defaults in the probe menu
 a               toggle auto-start in program settings
 h               write help guidance into logs
 u               write update guidance into logs
@@ -80,6 +81,8 @@ Program configuration is written to:
 ```text
 ~/.vpings/config.json
 ```
+
+Probe defaults include the round interval, default timeout, default sample count, and default sample gap. Editing defaults affects new probes; the defaults editor can also apply the timeout/sample settings to all existing probes.
 
 Override the store path:
 

@@ -44,6 +44,7 @@ type AppModel struct {
 	startedAt        time.Time
 	lastRun          time.Time
 	form             *probeForm
+	defaultsForm     *probeDefaultsForm
 	err              error
 }
 
@@ -70,6 +71,9 @@ func (m AppModel) Init() tea.Cmd {
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.form != nil {
 		return m.updateForm(msg)
+	}
+	if m.defaultsForm != nil {
+		return m.updateDefaultsForm(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -189,10 +193,12 @@ func (m AppModel) updateProbeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			Host:           "dns.alidns.com",
 			Port:           0,
 			Timeout:        m.cfg.DefaultTimeout,
-			SampleCount:    appconfig.DefaultSampleCount,
-			SampleInterval: appconfig.DefaultSampleInterval,
+			SampleCount:    m.cfg.DefaultSampleCount,
+			SampleInterval: m.cfg.DefaultSampleInterval,
 			Enabled:        true,
 		}, -1)
+	case "g":
+		m.defaultsForm = newProbeDefaultsForm(m.cfg)
 	case "e", "enter":
 		if len(m.cfg.Probes) > 0 {
 			m.form = newProbeForm(m.cfg.Probes[m.probeIndex], m.probeIndex)
@@ -272,9 +278,49 @@ func (m AppModel) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m AppModel) updateDefaultsForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+
+	switch key.String() {
+	case "esc":
+		m.defaultsForm = nil
+		m.addLog("probe defaults edit cancelled")
+		return m, nil
+	case "enter":
+		defaults, err := m.defaultsForm.value()
+		if err != nil {
+			m.defaultsForm.err = err.Error()
+			return m, nil
+		}
+		m.cfg.ProbeInterval = defaults.probeInterval
+		m.cfg.DefaultTimeout = defaults.defaultTimeout
+		m.cfg.DefaultSampleCount = defaults.sampleCount
+		m.cfg.DefaultSampleInterval = defaults.sampleInterval
+		if defaults.applyExisting {
+			for i := range m.cfg.Probes {
+				m.cfg.Probes[i].Timeout = defaults.defaultTimeout
+				m.cfg.Probes[i].SampleCount = defaults.sampleCount
+				m.cfg.Probes[i].SampleInterval = defaults.sampleInterval
+			}
+		}
+		m.defaultsForm = nil
+		m.saveConfig("probe defaults saved")
+		return m, nil
+	default:
+		m.defaultsForm.update(key)
+	}
+	return m, nil
+}
+
 func (m AppModel) View() string {
 	if m.form != nil {
 		return m.renderFrame(m.form.view())
+	}
+	if m.defaultsForm != nil {
+		return m.renderFrame(m.defaultsForm.view())
 	}
 
 	var body string
@@ -298,7 +344,7 @@ func (m AppModel) renderFrame(body string) string {
 	b.WriteString(titleStyle.Render("vpings"))
 	b.WriteString("\n")
 	for i, item := range menuItems {
-		if appView(i) == m.active && m.form == nil {
+		if appView(i) == m.active && m.form == nil && m.defaultsForm == nil {
 			b.WriteString(okStyle.Render("[" + item + "]"))
 		} else {
 			b.WriteString(mutedStyle.Render(" " + item + " "))
@@ -392,8 +438,16 @@ func (m AppModel) viewProbes() string {
 	var b strings.Builder
 	b.WriteString(headerStyle.Render("Probe settings"))
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render("n new | e/enter edit | d delete | space enable/disable"))
+	b.WriteString(mutedStyle.Render("g defaults | n new | e/enter edit | d delete | space enable/disable"))
 	b.WriteString("\n\n")
+	b.WriteString(headerStyle.Render("Defaults"))
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("Round interval: %s | Timeout: %s | Samples: %d | Sample gap: %s\n\n",
+		m.cfg.ProbeInterval,
+		m.cfg.DefaultTimeout,
+		m.cfg.DefaultSampleCount,
+		m.cfg.DefaultSampleInterval,
+	))
 	if len(m.cfg.Probes) == 0 {
 		b.WriteString(mutedStyle.Render("No probes configured. Press n to create one."))
 		return b.String()
@@ -528,6 +582,111 @@ type probeForm struct {
 type formField struct {
 	label string
 	value string
+}
+
+type probeDefaultsForm struct {
+	cursor int
+	err    string
+	fields []formField
+}
+
+type probeDefaults struct {
+	probeInterval  time.Duration
+	defaultTimeout time.Duration
+	sampleCount    int
+	sampleInterval time.Duration
+	applyExisting  bool
+}
+
+func newProbeDefaultsForm(cfg appconfig.Config) *probeDefaultsForm {
+	return &probeDefaultsForm{
+		fields: []formField{
+			{label: "Round interval", value: cfg.ProbeInterval.String()},
+			{label: "Timeout", value: cfg.DefaultTimeout.String()},
+			{label: "Samples", value: strconv.Itoa(cfg.DefaultSampleCount)},
+			{label: "Sample gap", value: cfg.DefaultSampleInterval.String()},
+			{label: "Apply existing", value: "false"},
+		},
+	}
+}
+
+func (f *probeDefaultsForm) update(key tea.KeyMsg) {
+	f.err = ""
+	switch key.String() {
+	case "up", "shift+tab":
+		if f.cursor > 0 {
+			f.cursor--
+		}
+	case "down", "tab":
+		if f.cursor < len(f.fields)-1 {
+			f.cursor++
+		}
+	case "backspace":
+		value := f.fields[f.cursor].value
+		if len(value) > 0 {
+			f.fields[f.cursor].value = value[:len(value)-1]
+		}
+	case "ctrl+u":
+		f.fields[f.cursor].value = ""
+	default:
+		if len(key.Runes) > 0 {
+			f.fields[f.cursor].value += string(key.Runes)
+		}
+	}
+}
+
+func (f probeDefaultsForm) value() (probeDefaults, error) {
+	probeInterval, err := parseDurationWithSecondsDefault(strings.TrimSpace(f.fields[0].value))
+	if err != nil || probeInterval <= 0 {
+		return probeDefaults{}, fmt.Errorf("round interval must be a duration like 60s or 60")
+	}
+	defaultTimeout, err := parseDurationWithSecondsDefault(strings.TrimSpace(f.fields[1].value))
+	if err != nil || defaultTimeout <= 0 {
+		return probeDefaults{}, fmt.Errorf("timeout must be a duration like 3s or 3")
+	}
+	sampleCount, err := strconv.Atoi(strings.TrimSpace(f.fields[2].value))
+	if err != nil || sampleCount < 1 || sampleCount > 100 {
+		return probeDefaults{}, fmt.Errorf("samples must be 1-100")
+	}
+	sampleInterval, err := parseDurationWithSecondsDefault(strings.TrimSpace(f.fields[3].value))
+	if err != nil || sampleInterval < 0 {
+		return probeDefaults{}, fmt.Errorf("sample gap must be a duration like 1s or 1")
+	}
+	applyExisting, err := strconv.ParseBool(strings.TrimSpace(f.fields[4].value))
+	if err != nil {
+		return probeDefaults{}, fmt.Errorf("apply existing must be true or false")
+	}
+	return probeDefaults{
+		probeInterval:  probeInterval,
+		defaultTimeout: defaultTimeout,
+		sampleCount:    sampleCount,
+		sampleInterval: sampleInterval,
+		applyExisting:  applyExisting,
+	}, nil
+}
+
+func (f probeDefaultsForm) view() string {
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("Probe defaults"))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render("up/down move | type edit | ctrl+u clear | enter save | esc cancel"))
+	b.WriteString("\n\n")
+	for i, field := range f.fields {
+		line := fmt.Sprintf("%-16s %s", field.label+":", field.value)
+		if i == f.cursor {
+			b.WriteString(okStyle.Render("> " + line))
+		} else {
+			b.WriteString("  " + line)
+		}
+		b.WriteByte('\n')
+	}
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render("Apply existing=false only changes defaults for new probes. true also updates current probes."))
+	if f.err != "" {
+		b.WriteString("\n\n")
+		b.WriteString(failStyle.Render(f.err))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func newProbeForm(item appconfig.ProbeConfig, index int) *probeForm {

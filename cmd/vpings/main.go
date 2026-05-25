@@ -142,8 +142,10 @@ func parseConfig(command string, args []string) (config, error) {
 	fs.SetOutput(os.Stderr)
 
 	var tcpPorts, udpPorts, quicPorts string
+	var icmpEnabled bool
 	fs.StringVar(&cfg.target, "target", "", "target host or IP")
 	fs.StringVar(&cfg.target, "t", "", "target host or IP")
+	fs.BoolVar(&icmpEnabled, "icmp", false, "enable ICMP echo probe")
 	fs.StringVar(&tcpPorts, "tcp", "", "comma-separated TCP ports")
 	fs.StringVar(&udpPorts, "udp", "", "comma-separated UDP ports")
 	fs.StringVar(&quicPorts, "quic", "", "comma-separated QUIC ports")
@@ -166,19 +168,26 @@ func parseConfig(command string, args []string) (config, error) {
 		cfg.count = 1
 	}
 
-	specs, err := buildSpecs(cfg.target, cfg.timeout, tcpPorts, udpPorts, quicPorts)
+	specs, err := buildSpecs(cfg.target, cfg.timeout, icmpEnabled, tcpPorts, udpPorts, quicPorts)
 	if err != nil {
 		return cfg, err
 	}
 	if len(specs) == 0 {
-		return cfg, errors.New("at least one of --tcp, --udp, or --quic is required")
+		return cfg, errors.New("at least one of --icmp, --tcp, --udp, or --quic is required")
 	}
 	cfg.specs = specs
 	return cfg, nil
 }
 
-func buildSpecs(target string, timeout time.Duration, tcpPorts, udpPorts, quicPorts string) ([]probe.Spec, error) {
+func buildSpecs(target string, timeout time.Duration, icmpEnabled bool, tcpPorts, udpPorts, quicPorts string) ([]probe.Spec, error) {
 	var specs []probe.Spec
+	if icmpEnabled {
+		specs = append(specs, probe.Spec{
+			Protocol: probe.ProtocolICMP,
+			Host:     target,
+			Timeout:  timeout,
+		})
+	}
 	for _, item := range []struct {
 		protocol probe.Protocol
 		ports    string
@@ -233,12 +242,12 @@ func defaultStorePath() string {
 }
 
 func printUsage(name string) {
-	fmt.Fprintf(os.Stderr, `vpings probes TCP, UDP, and QUIC latency.
+	fmt.Fprintf(os.Stderr, `vpings probes ICMP, TCP, UDP, and QUIC latency.
 
 Usage:
   %[1]s app
-  %[1]s run --target HOST --tcp 80,443 --udp 53 --quic 443
-  %[1]s watch --target HOST --tcp 443 --quic 443
+  %[1]s run --target HOST --icmp --tcp 80,443 --udp 53 --quic 443
+  %[1]s watch --target HOST --icmp --tcp 443 --quic 443
 
 Commands:
   app      open the interactive menu

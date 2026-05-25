@@ -5,6 +5,7 @@
 ## Current MVP
 
 - TCP connect latency probes.
+- ICMP echo probes.
 - UDP send/read probes. A UDP timeout is reported as `sent_no_reply`, because UDP does not provide a generic handshake.
 - QUIC handshake latency probes.
 - Probe rounds with configurable sample count and sample interval.
@@ -24,13 +25,13 @@ go build ./cmd/vpings
 Run a short probe set:
 
 ```bash
-go run ./cmd/vpings run --target dns.alidns.com --tcp 443 --udp 53 --quic 853 --count 3
+go run ./cmd/vpings run --target dns.alidns.com --icmp --tcp 443 --udp 53 --quic 853 --count 3
 ```
 
 Open the terminal watch view:
 
 ```bash
-go run ./cmd/vpings watch --target dns.alidns.com --tcp 443 --quic 853 --interval 2s
+go run ./cmd/vpings watch --target dns.alidns.com --icmp --tcp 443 --quic 853 --interval 60s
 ```
 
 Open the full interactive menu:
@@ -39,7 +40,7 @@ Open the full interactive menu:
 go run ./cmd/vpings app
 ```
 
-The default app probes target AliDNS at `dns.alidns.com`.
+The default app probes target AliDNS at `dns.alidns.com`. Probe rounds run every 60 seconds by default, and each probe sends 10 packets/samples with a 1 second sample gap.
 
 Menu keys:
 

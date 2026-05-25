@@ -10,6 +10,13 @@ import (
 	"github.com/longyiqiang/vpings/internal/probe"
 )
 
+const (
+	DefaultProbeInterval  = 60 * time.Second
+	DefaultProbeTimeout   = 3 * time.Second
+	DefaultSampleCount    = 10
+	DefaultSampleInterval = time.Second
+)
+
 type Config struct {
 	ProbeInterval  time.Duration `json:"probe_interval"`
 	DefaultTimeout time.Duration `json:"default_timeout"`
@@ -31,13 +38,14 @@ type ProbeConfig struct {
 
 func Default() Config {
 	return Config{
-		ProbeInterval:  2 * time.Second,
-		DefaultTimeout: 3 * time.Second,
+		ProbeInterval:  DefaultProbeInterval,
+		DefaultTimeout: DefaultProbeTimeout,
 		AutoStart:      false,
 		Probes: []ProbeConfig{
-			{ID: "tcp-alidns-443", Name: "AliDNS TCP 443", Protocol: probe.ProtocolTCP, Host: "dns.alidns.com", Port: 443, Timeout: 3 * time.Second, SampleCount: 5, SampleInterval: 200 * time.Millisecond, Enabled: true},
-			{ID: "udp-alidns-53", Name: "AliDNS UDP 53", Protocol: probe.ProtocolUDP, Host: "dns.alidns.com", Port: 53, Timeout: 3 * time.Second, SampleCount: 5, SampleInterval: 200 * time.Millisecond, Enabled: true},
-			{ID: "quic-alidns-853", Name: "AliDNS QUIC 853", Protocol: probe.ProtocolQUIC, Host: "dns.alidns.com", Port: 853, Timeout: 3 * time.Second, SampleCount: 5, SampleInterval: 200 * time.Millisecond, Enabled: true},
+			{ID: "icmp-alidns", Name: "AliDNS ICMP", Protocol: probe.ProtocolICMP, Host: "dns.alidns.com", Port: 0, Timeout: DefaultProbeTimeout, SampleCount: DefaultSampleCount, SampleInterval: DefaultSampleInterval, Enabled: true},
+			{ID: "tcp-alidns-443", Name: "AliDNS TCP 443", Protocol: probe.ProtocolTCP, Host: "dns.alidns.com", Port: 443, Timeout: DefaultProbeTimeout, SampleCount: DefaultSampleCount, SampleInterval: DefaultSampleInterval, Enabled: true},
+			{ID: "udp-alidns-53", Name: "AliDNS UDP 53", Protocol: probe.ProtocolUDP, Host: "dns.alidns.com", Port: 53, Timeout: DefaultProbeTimeout, SampleCount: DefaultSampleCount, SampleInterval: DefaultSampleInterval, Enabled: true},
+			{ID: "quic-alidns-853", Name: "AliDNS QUIC 853", Protocol: probe.ProtocolQUIC, Host: "dns.alidns.com", Port: 853, Timeout: DefaultProbeTimeout, SampleCount: DefaultSampleCount, SampleInterval: DefaultSampleInterval, Enabled: true},
 		},
 	}
 }
@@ -64,6 +72,7 @@ func Load(path string) (Config, error) {
 	}
 	cfg.normalize()
 	cfg.migrateCloudflareDefaults()
+	cfg.migrateFastAliDNSDefaults()
 	return cfg, nil
 }
 
@@ -114,10 +123,10 @@ func NewProbeID(protocol probe.Protocol, host string, port int) string {
 
 func (c *Config) normalize() {
 	if c.ProbeInterval <= 0 {
-		c.ProbeInterval = 2 * time.Second
+		c.ProbeInterval = DefaultProbeInterval
 	}
 	if c.DefaultTimeout <= 0 {
-		c.DefaultTimeout = 3 * time.Second
+		c.DefaultTimeout = DefaultProbeTimeout
 	}
 	for i := range c.Probes {
 		if c.Probes[i].ID == "" {
@@ -130,10 +139,10 @@ func (c *Config) normalize() {
 			c.Probes[i].Timeout = c.DefaultTimeout
 		}
 		if c.Probes[i].SampleCount <= 0 {
-			c.Probes[i].SampleCount = 5
+			c.Probes[i].SampleCount = DefaultSampleCount
 		}
 		if c.Probes[i].SampleInterval <= 0 {
-			c.Probes[i].SampleInterval = 200 * time.Millisecond
+			c.Probes[i].SampleInterval = DefaultSampleInterval
 		}
 	}
 }
@@ -148,4 +157,35 @@ func (c *Config) migrateCloudflareDefaults() {
 		}
 	}
 	c.Probes = Default().Probes
+}
+
+func (c *Config) migrateFastAliDNSDefaults() {
+	if len(c.Probes) != 3 {
+		return
+	}
+	defaultIDs := map[string]bool{
+		"tcp-alidns-443":  true,
+		"udp-alidns-53":   true,
+		"quic-alidns-853": true,
+	}
+	for _, item := range c.Probes {
+		if item.Host != "dns.alidns.com" || !defaultIDs[item.ID] {
+			return
+		}
+	}
+	if c.ProbeInterval == 2*time.Second {
+		c.ProbeInterval = DefaultProbeInterval
+	}
+	for i := range c.Probes {
+		if c.Probes[i].SampleCount == 5 {
+			c.Probes[i].SampleCount = DefaultSampleCount
+		}
+		if c.Probes[i].SampleInterval == 200*time.Millisecond {
+			c.Probes[i].SampleInterval = DefaultSampleInterval
+		}
+	}
+	if len(c.Probes) == 3 {
+		defaultICMP := Default().Probes[0]
+		c.Probes = append([]ProbeConfig{defaultICMP}, c.Probes...)
+	}
 }

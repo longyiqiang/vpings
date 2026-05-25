@@ -12,6 +12,7 @@ const (
 	ProtocolTCP  Protocol = "tcp"
 	ProtocolUDP  Protocol = "udp"
 	ProtocolQUIC Protocol = "quic"
+	ProtocolICMP Protocol = "icmp"
 )
 
 type Status string
@@ -70,6 +71,8 @@ func Run(parent context.Context, spec Spec) Result {
 		err = probeUDP(ctx, spec, &result)
 	case ProtocolQUIC:
 		err = probeQUIC(ctx, spec)
+	case ProtocolICMP:
+		err = probeICMP(ctx, spec)
 	default:
 		err = fmt.Errorf("unsupported protocol %q", spec.Protocol)
 	}

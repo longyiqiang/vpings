@@ -31,16 +31,23 @@ func RenderResults(results []probe.Result) string {
 		if detail == "" {
 			detail = result.Error
 		}
-		b.WriteString(fmt.Sprintf("%-8s %-28s %-8d %-10s %-12s %s\n",
+		b.WriteString(fmt.Sprintf("%-8s %-28s %-8s %-10s %-12s %s\n",
 			result.Protocol,
 			result.Host,
-			result.Port,
+			resultDisplayPort(result),
 			status,
 			formatDuration(result.Duration),
 			mutedStyle.Render(detail),
 		))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func resultDisplayPort(result probe.Result) string {
+	if result.Protocol == probe.ProtocolICMP {
+		return "-"
+	}
+	return fmt.Sprintf("%d", result.Port)
 }
 
 func renderStatus(status probe.Status) string {

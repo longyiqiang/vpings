@@ -183,14 +183,14 @@ func (m AppModel) updateProbeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		m.form = newProbeForm(appconfig.ProbeConfig{
-			ID:             appconfig.NewProbeID(probe.ProtocolTCP, "example.com", 443),
-			Name:           "New TCP Probe",
-			Protocol:       probe.ProtocolTCP,
+			ID:             appconfig.NewProbeID(probe.ProtocolICMP, "dns.alidns.com", 0),
+			Name:           "New ICMP Probe",
+			Protocol:       probe.ProtocolICMP,
 			Host:           "dns.alidns.com",
-			Port:           443,
+			Port:           0,
 			Timeout:        m.cfg.DefaultTimeout,
-			SampleCount:    5,
-			SampleInterval: 200 * time.Millisecond,
+			SampleCount:    appconfig.DefaultSampleCount,
+			SampleInterval: appconfig.DefaultSampleInterval,
 			Enabled:        true,
 		}, -1)
 	case "e", "enter":
@@ -410,12 +410,12 @@ func (m AppModel) viewProbes() string {
 			state = okStyle.Render("on")
 		}
 		samples := fmt.Sprintf("%dx/%s", item.SampleCount, item.SampleInterval)
-		line := fmt.Sprintf("%-3s %-22s %-8s %-24s %-6d %-8s %-12s %s",
+		line := fmt.Sprintf("%-3s %-22s %-8s %-24s %-6s %-8s %-12s %s",
 			cursor,
 			truncate(item.Name, 22),
 			item.Protocol,
 			truncate(item.Host, 24),
-			item.Port,
+			formatPort(item),
 			item.Timeout,
 			samples,
 			state,
@@ -511,6 +511,13 @@ func truncate(value string, max int) string {
 	return value[:max-1] + "."
 }
 
+func formatPort(item appconfig.ProbeConfig) string {
+	if item.Protocol == probe.ProtocolICMP {
+		return "-"
+	}
+	return strconv.Itoa(item.Port)
+}
+
 type probeForm struct {
 	index  int
 	cursor int
@@ -567,30 +574,35 @@ func (f *probeForm) update(key tea.KeyMsg) {
 
 func (f probeForm) value() (appconfig.ProbeConfig, int, error) {
 	port, err := strconv.Atoi(strings.TrimSpace(f.fields[3].value))
-	if err != nil || port < 1 || port > 65535 {
+	if err != nil {
+		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("port must be a number")
+	}
+	protocol := probe.Protocol(strings.ToLower(strings.TrimSpace(f.fields[1].value)))
+	switch protocol {
+	case probe.ProtocolTCP, probe.ProtocolUDP, probe.ProtocolQUIC, probe.ProtocolICMP:
+	default:
+		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("protocol must be icmp, tcp, udp, or quic")
+	}
+	if protocol == probe.ProtocolICMP {
+		port = 0
+	} else if port < 1 || port > 65535 {
 		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("port must be 1-65535")
 	}
-	timeout, err := time.ParseDuration(strings.TrimSpace(f.fields[4].value))
+	timeout, err := parseDurationWithSecondsDefault(strings.TrimSpace(f.fields[4].value))
 	if err != nil || timeout <= 0 {
-		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("timeout must be a duration like 3s or 500ms")
+		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("timeout must be a duration like 3s or 3")
 	}
 	sampleCount, err := strconv.Atoi(strings.TrimSpace(f.fields[5].value))
 	if err != nil || sampleCount < 1 || sampleCount > 100 {
 		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("samples must be 1-100")
 	}
-	sampleInterval, err := time.ParseDuration(strings.TrimSpace(f.fields[6].value))
+	sampleInterval, err := parseDurationWithSecondsDefault(strings.TrimSpace(f.fields[6].value))
 	if err != nil || sampleInterval < 0 {
-		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("sample gap must be a duration like 200ms")
+		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("sample gap must be a duration like 1s or 1")
 	}
 	enabled, err := strconv.ParseBool(strings.TrimSpace(f.fields[7].value))
 	if err != nil {
 		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("enabled must be true or false")
-	}
-	protocol := probe.Protocol(strings.ToLower(strings.TrimSpace(f.fields[1].value)))
-	switch protocol {
-	case probe.ProtocolTCP, probe.ProtocolUDP, probe.ProtocolQUIC:
-	default:
-		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("protocol must be tcp, udp, or quic")
 	}
 	id := strings.TrimSpace(f.fields[8].value)
 	host := strings.TrimSpace(f.fields[2].value)
@@ -615,6 +627,16 @@ func (f probeForm) value() (appconfig.ProbeConfig, int, error) {
 		SampleInterval: sampleInterval,
 		Enabled:        enabled,
 	}, f.index, nil
+}
+
+func parseDurationWithSecondsDefault(value string) (time.Duration, error) {
+	if value == "" {
+		return 0, fmt.Errorf("empty duration")
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		return time.Duration(seconds) * time.Second, nil
+	}
+	return time.ParseDuration(value)
 }
 
 func (f probeForm) view() string {

@@ -5,6 +5,7 @@ go 1.25.7
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/guptarohit/asciigraph v0.9.0
 	github.com/quic-go/quic-go v0.59.1
 )
 

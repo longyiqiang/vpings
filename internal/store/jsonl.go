@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 type JSONL struct {
 	mu   sync.Mutex
 	file *os.File
+	path string
 }
 
 func OpenJSONL(path string) (*JSONL, error) {
@@ -22,7 +24,7 @@ func OpenJSONL(path string) (*JSONL, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &JSONL{file: file}, nil
+	return &JSONL{file: file, path: path}, nil
 }
 
 func (j *JSONL) Append(result probe.Result) error {
@@ -41,4 +43,36 @@ func (j *JSONL) Append(result probe.Result) error {
 
 func (j *JSONL) Close() error {
 	return j.file.Close()
+}
+
+func (j *JSONL) Path() string {
+	return j.path
+}
+
+func ReadRecent(path string, limit int) ([]probe.Result, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	var results []probe.Result
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var result probe.Result
+		if err := json.Unmarshal(scanner.Bytes(), &result); err != nil {
+			continue
+		}
+		results = append(results, result)
+		if limit > 0 && len(results) > limit {
+			results = results[len(results)-limit:]
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }

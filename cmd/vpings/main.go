@@ -69,7 +69,7 @@ func runApp(args []string) error {
 	}
 	defer recorder.Close()
 
-	history, err := store.ReadRecent(storePath, 80)
+	history, err := store.ReadRecent(storePath, 50000)
 	if err != nil {
 		return err
 	}

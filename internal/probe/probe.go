@@ -24,6 +24,8 @@ const (
 
 type Spec struct {
 	Protocol Protocol      `json:"protocol"`
+	ID       string        `json:"id,omitempty"`
+	Name     string        `json:"name,omitempty"`
 	Host     string        `json:"host"`
 	Port     int           `json:"port"`
 	Timeout  time.Duration `json:"timeout"`
@@ -31,6 +33,11 @@ type Spec struct {
 
 type Result struct {
 	StartedAt   time.Time     `json:"started_at"`
+	RoundID     string        `json:"round_id,omitempty"`
+	ProbeID     string        `json:"probe_id,omitempty"`
+	ProbeName   string        `json:"probe_name,omitempty"`
+	Attempt     int           `json:"attempt,omitempty"`
+	Attempts    int           `json:"attempts,omitempty"`
 	Protocol    Protocol      `json:"protocol"`
 	Host        string        `json:"host"`
 	Port        int           `json:"port"`
@@ -47,6 +54,8 @@ func Run(parent context.Context, spec Spec) Result {
 	start := time.Now()
 	result := Result{
 		StartedAt: start,
+		ProbeID:   spec.ID,
+		ProbeName: spec.Name,
 		Protocol:  spec.Protocol,
 		Host:      spec.Host,
 		Port:      spec.Port,

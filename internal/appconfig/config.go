@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	DefaultProbeInterval  = 60 * time.Second
-	DefaultProbeTimeout   = 3 * time.Second
+	DefaultProbeInterval  = 10 * time.Second
+	DefaultProbeTimeout   = 1 * time.Second
 	DefaultSampleCount    = 10
-	DefaultSampleInterval = time.Second
+	DefaultSampleInterval = 0 * time.Second
 )
 
 type Config struct {
@@ -170,10 +170,11 @@ func (c *Config) migrateCloudflareDefaults() {
 }
 
 func (c *Config) migrateFastAliDNSDefaults() {
-	if len(c.Probes) != 3 {
+	if len(c.Probes) != 3 && len(c.Probes) != 4 {
 		return
 	}
 	defaultIDs := map[string]bool{
+		"icmp-alidns":     true,
 		"tcp-alidns-443":  true,
 		"udp-alidns-53":   true,
 		"quic-alidns-853": true,
@@ -192,6 +193,9 @@ func (c *Config) migrateFastAliDNSDefaults() {
 	if c.DefaultSampleInterval == 200*time.Millisecond {
 		c.DefaultSampleInterval = DefaultSampleInterval
 	}
+	if c.DefaultSampleInterval == time.Second {
+		c.DefaultSampleInterval = DefaultSampleInterval
+	}
 	for i := range c.Probes {
 		if c.Probes[i].SampleCount == 5 {
 			c.Probes[i].SampleCount = DefaultSampleCount
@@ -199,9 +203,19 @@ func (c *Config) migrateFastAliDNSDefaults() {
 		if c.Probes[i].SampleInterval == 200*time.Millisecond {
 			c.Probes[i].SampleInterval = DefaultSampleInterval
 		}
+		if c.Probes[i].SampleInterval == time.Second {
+			c.Probes[i].SampleInterval = DefaultSampleInterval
+		}
 	}
 	if len(c.Probes) == 3 {
 		defaultICMP := Default().Probes[0]
 		c.Probes = append([]ProbeConfig{defaultICMP}, c.Probes...)
+	}
+	if len(c.Probes) == 4 {
+		for i := range c.Probes {
+			if c.Probes[i].ID == "icmp-alidns" && c.Probes[i].SampleInterval == time.Second {
+				c.Probes[i].SampleInterval = DefaultSampleInterval
+			}
+		}
 	}
 }

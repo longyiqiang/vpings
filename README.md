@@ -40,7 +40,7 @@ Open the full interactive menu:
 go run ./cmd/vpings app
 ```
 
-The default app probes target AliDNS at `dns.alidns.com`. Probe rounds run every 60 seconds by default, and each probe sends 10 packets/samples with a 1 second sample gap.
+The default app probes target AliDNS at `dns.alidns.com`. Each probe sends 10 packets/samples per round with no packet delay by default. Set a sample gap only when you want to throttle packet sending.
 
 Menu keys:
 

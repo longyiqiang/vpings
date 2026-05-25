@@ -378,7 +378,7 @@ func (m AppModel) viewResults() string {
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render("up/down select probe | enter detail | r run now"))
 	b.WriteString("\n\n")
-	b.WriteString(RenderRealtimeProbeChart(selected, m.results))
+	b.WriteString(RenderRealtimeProbeChart(selected, m.results, m.cfg.ProbeInterval))
 	b.WriteString("\n\n")
 	b.WriteString(headerStyle.Render("Probes"))
 	b.WriteString("\n")
@@ -401,7 +401,7 @@ func (m AppModel) viewProbeDetail(item appconfig.ProbeConfig) string {
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render("esc back | r run now"))
 	b.WriteString("\n\n")
-	b.WriteString(RenderProbeDetailCharts(item, m.results, time.Now()))
+	b.WriteString(RenderProbeDetailCharts(item, m.results, time.Now(), m.cfg.ProbeInterval))
 	return b.String()
 }
 

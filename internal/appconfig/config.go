@@ -18,10 +18,12 @@ const (
 )
 
 type Config struct {
-	ProbeInterval  time.Duration `json:"probe_interval"`
-	DefaultTimeout time.Duration `json:"default_timeout"`
-	AutoStart      bool          `json:"auto_start"`
-	Probes         []ProbeConfig `json:"probes"`
+	ProbeInterval         time.Duration `json:"probe_interval"`
+	DefaultTimeout        time.Duration `json:"default_timeout"`
+	DefaultSampleCount    int           `json:"default_sample_count"`
+	DefaultSampleInterval time.Duration `json:"default_sample_interval"`
+	AutoStart             bool          `json:"auto_start"`
+	Probes                []ProbeConfig `json:"probes"`
 }
 
 type ProbeConfig struct {
@@ -38,9 +40,11 @@ type ProbeConfig struct {
 
 func Default() Config {
 	return Config{
-		ProbeInterval:  DefaultProbeInterval,
-		DefaultTimeout: DefaultProbeTimeout,
-		AutoStart:      false,
+		ProbeInterval:         DefaultProbeInterval,
+		DefaultTimeout:        DefaultProbeTimeout,
+		DefaultSampleCount:    DefaultSampleCount,
+		DefaultSampleInterval: DefaultSampleInterval,
+		AutoStart:             false,
 		Probes: []ProbeConfig{
 			{ID: "icmp-alidns", Name: "AliDNS ICMP", Protocol: probe.ProtocolICMP, Host: "dns.alidns.com", Port: 0, Timeout: DefaultProbeTimeout, SampleCount: DefaultSampleCount, SampleInterval: DefaultSampleInterval, Enabled: true},
 			{ID: "tcp-alidns-443", Name: "AliDNS TCP 443", Protocol: probe.ProtocolTCP, Host: "dns.alidns.com", Port: 443, Timeout: DefaultProbeTimeout, SampleCount: DefaultSampleCount, SampleInterval: DefaultSampleInterval, Enabled: true},
@@ -128,6 +132,12 @@ func (c *Config) normalize() {
 	if c.DefaultTimeout <= 0 {
 		c.DefaultTimeout = DefaultProbeTimeout
 	}
+	if c.DefaultSampleCount <= 0 {
+		c.DefaultSampleCount = DefaultSampleCount
+	}
+	if c.DefaultSampleInterval <= 0 {
+		c.DefaultSampleInterval = DefaultSampleInterval
+	}
 	for i := range c.Probes {
 		if c.Probes[i].ID == "" {
 			c.Probes[i].ID = NewProbeID(c.Probes[i].Protocol, c.Probes[i].Host, c.Probes[i].Port)
@@ -139,10 +149,10 @@ func (c *Config) normalize() {
 			c.Probes[i].Timeout = c.DefaultTimeout
 		}
 		if c.Probes[i].SampleCount <= 0 {
-			c.Probes[i].SampleCount = DefaultSampleCount
+			c.Probes[i].SampleCount = c.DefaultSampleCount
 		}
 		if c.Probes[i].SampleInterval <= 0 {
-			c.Probes[i].SampleInterval = DefaultSampleInterval
+			c.Probes[i].SampleInterval = c.DefaultSampleInterval
 		}
 	}
 }
@@ -175,6 +185,12 @@ func (c *Config) migrateFastAliDNSDefaults() {
 	}
 	if c.ProbeInterval == 2*time.Second {
 		c.ProbeInterval = DefaultProbeInterval
+	}
+	if c.DefaultSampleCount == 5 {
+		c.DefaultSampleCount = DefaultSampleCount
+	}
+	if c.DefaultSampleInterval == 200*time.Millisecond {
+		c.DefaultSampleInterval = DefaultSampleInterval
 	}
 	for i := range c.Probes {
 		if c.Probes[i].SampleCount == 5 {

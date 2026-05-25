@@ -12,6 +12,12 @@ func TestDefaultProbeCadence(t *testing.T) {
 	if cfg.ProbeInterval != 60*time.Second {
 		t.Fatalf("ProbeInterval = %s, want 60s", cfg.ProbeInterval)
 	}
+	if cfg.DefaultSampleCount != 10 {
+		t.Fatalf("DefaultSampleCount = %d, want 10", cfg.DefaultSampleCount)
+	}
+	if cfg.DefaultSampleInterval != time.Second {
+		t.Fatalf("DefaultSampleInterval = %s, want 1s", cfg.DefaultSampleInterval)
+	}
 	for _, item := range cfg.Probes {
 		if item.SampleCount != 10 {
 			t.Fatalf("%s SampleCount = %d, want 10", item.ID, item.SampleCount)

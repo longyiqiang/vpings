@@ -35,24 +35,25 @@ type summaryBucket struct {
 	latencies []float64
 }
 
-func RenderRealtimeProbeChart(item appconfig.ProbeConfig, results []probe.Result) string {
-	summaries := summariesForProbe(item, results, 60, time.Time{})
+func RenderRealtimeProbeChart(item appconfig.ProbeConfig, results []probe.Result, roundInterval time.Duration) string {
+	summaries := summariesForProbe(item, results, 0, time.Time{})
 	if len(summaries) == 0 {
 		return mutedStyle.Render("No realtime samples yet. Press r to run this probe round.")
 	}
-	return renderSummaryChart("realtime "+item.Name, summaries, 56, 9)
+	now := time.Now()
+	summaries = alignRecentSummaries(summaries, roundInterval, 60, now)
+	return renderSummaryChart("realtime "+item.Name, summaries, roundInterval, 56, 9)
 }
 
-func RenderProbeDetailCharts(item appconfig.ProbeConfig, results []probe.Result, now time.Time) string {
+func RenderProbeDetailCharts(item appconfig.ProbeConfig, results []probe.Result, now time.Time, roundInterval time.Duration) string {
 	sections := []struct {
-		title    string
-		since    time.Time
-		maxItems int
+		title  string
+		window time.Duration
 	}{
-		{title: "realtime", since: time.Time{}, maxItems: 60},
-		{title: "past 24 hours", since: now.Add(-24 * time.Hour), maxItems: 96},
-		{title: "past 2 days", since: now.Add(-48 * time.Hour), maxItems: 96},
-		{title: "past week", since: now.Add(-7 * 24 * time.Hour), maxItems: 120},
+		{title: "realtime", window: 60 * roundInterval},
+		{title: "past 24 hours", window: 24 * time.Hour},
+		{title: "past 2 days", window: 48 * time.Hour},
+		{title: "past week", window: 7 * 24 * time.Hour},
 	}
 
 	var b strings.Builder
@@ -60,14 +61,16 @@ func RenderProbeDetailCharts(item appconfig.ProbeConfig, results []probe.Result,
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
-		summaries := summariesForProbe(item, results, section.maxItems, section.since)
+		since := now.Add(-section.window)
+		summaries := summariesForProbe(item, results, 0, since)
 		if len(summaries) == 0 {
 			b.WriteString(headerStyle.Render(section.title))
 			b.WriteString("\n")
 			b.WriteString(mutedStyle.Render("No samples in this window."))
 			continue
 		}
-		b.WriteString(renderSummaryChart(section.title, summaries, 56, 8))
+		summaries = alignWindowSummaries(summaries, roundInterval, since, now)
+		b.WriteString(renderSummaryChart(section.title, summaries, roundInterval, 56, 8))
 	}
 	return b.String()
 }
@@ -97,7 +100,7 @@ func formatProbeSelector(item appconfig.ProbeConfig, results []probe.Result) str
 	)
 }
 
-func renderSummaryChart(title string, summaries []probeSummary, width, height int) string {
+func renderSummaryChart(title string, summaries []probeSummary, roundInterval time.Duration, width, height int) string {
 	if len(summaries) == 0 {
 		return mutedStyle.Render("No samples.")
 	}
@@ -133,7 +136,7 @@ func renderSummaryChart(title string, summaries []probeSummary, width, height in
 
 	data := [][]float64{mins, maxes}
 	data = append(data, medianByLoss...)
-	caption := fmt.Sprintf("%s | x=time y=latency(ms) | range=min/max | color=loss green->red", title)
+	caption := fmt.Sprintf("%s | x=time/%s y=latency(ms) | range=min/max | color=loss green->red", title, formatChartInterval(roundInterval))
 	graph := asciigraph.PlotMany(data,
 		asciigraph.Caption(caption),
 		asciigraph.Height(height),
@@ -159,13 +162,14 @@ func renderSummaryChart(title string, summaries []probeSummary, width, height in
 
 	last := summaries[len(summaries)-1]
 	return graph + "\n" + mutedStyle.Render(fmt.Sprintf(
-		"latest %s median %.1fms range %.1f-%.1fms loss %.0f%% attempts %d",
+		"latest %s median %.1fms range %.1f-%.1fms loss %.0f%% attempts %d | x unit %s",
 		last.StartedAt.Format("15:04:05"),
 		last.MedianMS,
 		last.MinMS,
 		last.MaxMS,
 		last.LossRate*100,
 		last.Attempts,
+		formatChartInterval(roundInterval),
 	))
 }
 
@@ -186,6 +190,72 @@ func summariesForProbe(item appconfig.ProbeConfig, results []probe.Result, limit
 		filtered = filtered[len(filtered)-limit:]
 	}
 	return filtered
+}
+
+func alignRecentSummaries(summaries []probeSummary, interval time.Duration, slots int, now time.Time) []probeSummary {
+	if len(summaries) == 0 {
+		return nil
+	}
+	interval = normalizeChartInterval(interval)
+	if slots < 1 {
+		slots = len(summaries)
+	}
+	end := summaries[len(summaries)-1].StartedAt
+	if now.After(end) && now.Sub(end) < interval {
+		end = now
+	}
+	end = end.Truncate(interval)
+	start := end.Add(-time.Duration(slots-1) * interval)
+	return alignWindowSummaries(summaries, interval, start, end)
+}
+
+func alignWindowSummaries(summaries []probeSummary, interval time.Duration, start, end time.Time) []probeSummary {
+	if len(summaries) == 0 {
+		return nil
+	}
+	interval = normalizeChartInterval(interval)
+	if end.Before(start) {
+		end = start
+	}
+	start = start.Truncate(interval)
+	end = end.Truncate(interval)
+
+	bySlot := make(map[int64]probeSummary, len(summaries))
+	for _, summary := range summaries {
+		slotTime := summary.StartedAt.Truncate(interval)
+		key := slotTime.UnixNano()
+		existing, ok := bySlot[key]
+		if !ok || summary.StartedAt.After(existing.StartedAt) {
+			summary.StartedAt = slotTime
+			bySlot[key] = summary
+		}
+	}
+
+	slotCount := int(end.Sub(start)/interval) + 1
+	if slotCount < 1 {
+		slotCount = 1
+	}
+	aligned := make([]probeSummary, 0, slotCount)
+	for i := 0; i < slotCount; i++ {
+		slotTime := start.Add(time.Duration(i) * interval)
+		if summary, ok := bySlot[slotTime.UnixNano()]; ok {
+			aligned = append(aligned, summary)
+			continue
+		}
+		aligned = append(aligned, probeSummary{StartedAt: slotTime})
+	}
+	return aligned
+}
+
+func normalizeChartInterval(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return appconfig.DefaultProbeInterval
+	}
+	return interval
+}
+
+func formatChartInterval(interval time.Duration) string {
+	return normalizeChartInterval(interval).String()
 }
 
 func summarizeResults(results []probe.Result) []probeSummary {

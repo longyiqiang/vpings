@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,19 +30,21 @@ var menuItems = []string{
 }
 
 type AppModel struct {
-	cfg        appconfig.Config
-	configPath string
-	storePath  string
-	recorder   Recorder
-	results    []probe.Result
-	logs       []string
-	active     appView
-	probeIndex int
-	setting    int
-	startedAt  time.Time
-	lastRun    time.Time
-	form       *probeForm
-	err        error
+	cfg              appconfig.Config
+	configPath       string
+	storePath        string
+	recorder         Recorder
+	results          []probe.Result
+	logs             []string
+	active           appView
+	probeIndex       int
+	resultProbeIndex int
+	resultDetail     bool
+	setting          int
+	startedAt        time.Time
+	lastRun          time.Time
+	form             *probeForm
+	err              error
 }
 
 func NewAppModel(cfg appconfig.Config, configPath, storePath string, recorder Recorder, history []probe.Result) AppModel {
@@ -58,10 +61,10 @@ func NewAppModel(cfg appconfig.Config, configPath, storePath string, recorder Re
 }
 
 func (m AppModel) Init() tea.Cmd {
-	if len(m.cfg.EnabledSpecs()) == 0 {
+	if len(m.cfg.EnabledProbes()) == 0 {
 		return nil
 	}
-	return runRound(m.cfg.EnabledSpecs())
+	return runConfiguredRound(m.cfg.EnabledProbes())
 }
 
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -83,20 +86,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(msg) > 0 {
 			m.lastRun = time.Now()
-			m.addLog(fmt.Sprintf("completed %d probe(s)", len(msg)))
+			m.addLog(fmt.Sprintf("completed %d sample attempt(s)", len(msg)))
 		}
-		if len(m.results) > 200 {
-			m.results = m.results[len(m.results)-200:]
+		if len(m.results) > 20000 {
+			m.results = m.results[len(m.results)-20000:]
 		}
-		if len(m.cfg.EnabledSpecs()) == 0 {
+		if len(m.cfg.EnabledProbes()) == 0 {
 			return m, nil
 		}
 		return m, waitTick(m.cfg.ProbeInterval)
 	case tickMsg:
-		if len(m.cfg.EnabledSpecs()) == 0 {
+		if len(m.cfg.EnabledProbes()) == 0 {
 			return m, nil
 		}
-		return m, runRound(m.cfg.EnabledSpecs())
+		return m, runConfiguredRound(m.cfg.EnabledProbes())
 	case errMsg:
 		m.err = msg.err
 		m.addLog("runtime error: " + msg.err.Error())
@@ -122,19 +125,48 @@ func (m AppModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab", "left":
 		m.active = appView((int(m.active) + len(menuItems) - 1) % len(menuItems))
 	case "r":
-		if len(m.cfg.EnabledSpecs()) == 0 {
+		if len(m.cfg.EnabledProbes()) == 0 {
 			m.addLog("no enabled probes to run")
 			return m, nil
 		}
 		m.addLog("manual probe round started")
-		return m, runRound(m.cfg.EnabledSpecs())
+		return m, runConfiguredRound(m.cfg.EnabledProbes())
 	}
 
 	switch m.active {
+	case viewResults:
+		return m.updateResultKeys(msg)
 	case viewProbes:
 		return m.updateProbeKeys(msg)
 	case viewSettings:
 		return m.updateSettingKeys(msg)
+	}
+	return m, nil
+}
+
+func (m AppModel) updateResultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	enabled := m.cfg.EnabledProbes()
+	if len(enabled) == 0 {
+		m.resultDetail = false
+		m.resultProbeIndex = 0
+		return m, nil
+	}
+	if m.resultProbeIndex >= len(enabled) {
+		m.resultProbeIndex = len(enabled) - 1
+	}
+	switch msg.String() {
+	case "esc":
+		m.resultDetail = false
+	case "up", "k":
+		if m.resultProbeIndex > 0 {
+			m.resultProbeIndex--
+		}
+	case "down", "j":
+		if m.resultProbeIndex < len(enabled)-1 {
+			m.resultProbeIndex++
+		}
+	case "enter":
+		m.resultDetail = true
 	}
 	return m, nil
 }
@@ -151,13 +183,15 @@ func (m AppModel) updateProbeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		m.form = newProbeForm(appconfig.ProbeConfig{
-			ID:       appconfig.NewProbeID(probe.ProtocolTCP, "example.com", 443),
-			Name:     "New TCP Probe",
-			Protocol: probe.ProtocolTCP,
-			Host:     "example.com",
-			Port:     443,
-			Timeout:  m.cfg.DefaultTimeout,
-			Enabled:  true,
+			ID:             appconfig.NewProbeID(probe.ProtocolTCP, "example.com", 443),
+			Name:           "New TCP Probe",
+			Protocol:       probe.ProtocolTCP,
+			Host:           "dns.alidns.com",
+			Port:           443,
+			Timeout:        m.cfg.DefaultTimeout,
+			SampleCount:    5,
+			SampleInterval: 200 * time.Millisecond,
+			Enabled:        true,
 		}, -1)
 	case "e", "enter":
 		if len(m.cfg.Probes) > 0 {
@@ -281,14 +315,48 @@ func (m AppModel) renderFrame(body string) string {
 }
 
 func (m AppModel) viewResults() string {
-	if len(m.results) == 0 {
-		return mutedStyle.Render("No probe results yet. Press r to run enabled probes.")
+	enabled := m.cfg.EnabledProbes()
+	if len(enabled) == 0 {
+		return mutedStyle.Render("No enabled probes. Open 3 Probes and enable or create one.")
 	}
-	start := 0
-	if len(m.results) > 18 {
-		start = len(m.results) - 18
+	if m.resultProbeIndex >= len(enabled) {
+		m.resultProbeIndex = len(enabled) - 1
 	}
-	return RenderLatencyCharts(m.results) + "\n\n" + RenderResults(m.results[start:])
+	selected := enabled[m.resultProbeIndex]
+	if m.resultDetail {
+		return m.viewProbeDetail(selected)
+	}
+
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("Realtime latency"))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render("up/down select probe | enter detail | r run now"))
+	b.WriteString("\n\n")
+	b.WriteString(RenderRealtimeProbeChart(selected, m.results))
+	b.WriteString("\n\n")
+	b.WriteString(headerStyle.Render("Probes"))
+	b.WriteString("\n")
+	for i, item := range enabled {
+		prefix := "  "
+		if i == m.resultProbeIndex {
+			prefix = "> "
+			b.WriteString(okStyle.Render(prefix + formatProbeSelector(item, m.results)))
+		} else {
+			b.WriteString(prefix + formatProbeSelector(item, m.results))
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (m AppModel) viewProbeDetail(item appconfig.ProbeConfig) string {
+	var b strings.Builder
+	b.WriteString(headerStyle.Render(item.Name))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render("esc back | r run now"))
+	b.WriteString("\n\n")
+	b.WriteString(RenderProbeDetailCharts(item, m.results, time.Now()))
+	return b.String()
 }
 
 func (m AppModel) viewStatus() string {
@@ -297,7 +365,7 @@ func (m AppModel) viewStatus() string {
 	b.WriteString("\n")
 	b.WriteString(fmt.Sprintf("Uptime:       %s\n", time.Since(m.startedAt).Truncate(time.Second)))
 	b.WriteString(fmt.Sprintf("Interval:     %s\n", m.cfg.ProbeInterval))
-	b.WriteString(fmt.Sprintf("Enabled:      %d/%d probes\n", len(m.cfg.EnabledSpecs()), len(m.cfg.Probes)))
+	b.WriteString(fmt.Sprintf("Enabled:      %d/%d probes\n", len(m.cfg.EnabledProbes()), len(m.cfg.Probes)))
 	b.WriteString(fmt.Sprintf("Auto-start:   %t\n", m.cfg.AutoStart))
 	if m.lastRun.IsZero() {
 		b.WriteString("Last run:     never\n")
@@ -330,7 +398,7 @@ func (m AppModel) viewProbes() string {
 		b.WriteString(mutedStyle.Render("No probes configured. Press n to create one."))
 		return b.String()
 	}
-	b.WriteString(headerStyle.Render(fmt.Sprintf("%-3s %-22s %-8s %-28s %-6s %-9s %s", "", "NAME", "PROTO", "HOST", "PORT", "TIMEOUT", "STATE")))
+	b.WriteString(headerStyle.Render(fmt.Sprintf("%-3s %-22s %-8s %-24s %-6s %-8s %-12s %s", "", "NAME", "PROTO", "HOST", "PORT", "TIMEOUT", "SAMPLES", "STATE")))
 	b.WriteByte('\n')
 	for i, item := range m.cfg.Probes {
 		cursor := " "
@@ -341,13 +409,15 @@ func (m AppModel) viewProbes() string {
 		if item.Enabled {
 			state = okStyle.Render("on")
 		}
-		line := fmt.Sprintf("%-3s %-22s %-8s %-28s %-6d %-9s %s",
+		samples := fmt.Sprintf("%dx/%s", item.SampleCount, item.SampleInterval)
+		line := fmt.Sprintf("%-3s %-22s %-8s %-24s %-6d %-8s %-12s %s",
 			cursor,
 			truncate(item.Name, 22),
 			item.Protocol,
-			truncate(item.Host, 28),
+			truncate(item.Host, 24),
 			item.Port,
 			item.Timeout,
+			samples,
 			state,
 		)
 		if i == m.probeIndex {
@@ -402,6 +472,28 @@ func (m *AppModel) saveConfig(message string) {
 	m.addLog(message)
 }
 
+func runConfiguredRound(probes []appconfig.ProbeConfig) tea.Cmd {
+	return func() tea.Msg {
+		results := make([]probe.Result, 0)
+		for _, item := range probes {
+			roundID := fmt.Sprintf("%s-%d", item.ID, time.Now().UnixNano())
+			for attempt := 1; attempt <= item.SampleCount; attempt++ {
+				result := probe.Run(context.Background(), item.Spec())
+				result.RoundID = roundID
+				result.ProbeID = item.ID
+				result.ProbeName = item.Name
+				result.Attempt = attempt
+				result.Attempts = item.SampleCount
+				results = append(results, result)
+				if attempt < item.SampleCount && item.SampleInterval > 0 {
+					time.Sleep(item.SampleInterval)
+				}
+			}
+		}
+		return resultsMsg(results)
+	}
+}
+
 func tailStrings(values []string, limit int) []string {
 	if len(values) <= limit {
 		return values
@@ -440,6 +532,8 @@ func newProbeForm(item appconfig.ProbeConfig, index int) *probeForm {
 			{label: "Host", value: item.Host},
 			{label: "Port", value: strconv.Itoa(item.Port)},
 			{label: "Timeout", value: item.Timeout.String()},
+			{label: "Samples", value: strconv.Itoa(item.SampleCount)},
+			{label: "Sample gap", value: item.SampleInterval.String()},
 			{label: "Enabled", value: strconv.FormatBool(item.Enabled)},
 			{label: "ID", value: item.ID},
 		},
@@ -480,7 +574,15 @@ func (f probeForm) value() (appconfig.ProbeConfig, int, error) {
 	if err != nil || timeout <= 0 {
 		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("timeout must be a duration like 3s or 500ms")
 	}
-	enabled, err := strconv.ParseBool(strings.TrimSpace(f.fields[5].value))
+	sampleCount, err := strconv.Atoi(strings.TrimSpace(f.fields[5].value))
+	if err != nil || sampleCount < 1 || sampleCount > 100 {
+		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("samples must be 1-100")
+	}
+	sampleInterval, err := time.ParseDuration(strings.TrimSpace(f.fields[6].value))
+	if err != nil || sampleInterval < 0 {
+		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("sample gap must be a duration like 200ms")
+	}
+	enabled, err := strconv.ParseBool(strings.TrimSpace(f.fields[7].value))
 	if err != nil {
 		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("enabled must be true or false")
 	}
@@ -490,7 +592,7 @@ func (f probeForm) value() (appconfig.ProbeConfig, int, error) {
 	default:
 		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("protocol must be tcp, udp, or quic")
 	}
-	id := strings.TrimSpace(f.fields[6].value)
+	id := strings.TrimSpace(f.fields[8].value)
 	host := strings.TrimSpace(f.fields[2].value)
 	if host == "" {
 		return appconfig.ProbeConfig{}, f.index, fmt.Errorf("host is required")
@@ -503,13 +605,15 @@ func (f probeForm) value() (appconfig.ProbeConfig, int, error) {
 		name = fmt.Sprintf("%s %s:%d", protocol, host, port)
 	}
 	return appconfig.ProbeConfig{
-		ID:       id,
-		Name:     name,
-		Protocol: protocol,
-		Host:     host,
-		Port:     port,
-		Timeout:  timeout,
-		Enabled:  enabled,
+		ID:             id,
+		Name:           name,
+		Protocol:       protocol,
+		Host:           host,
+		Port:           port,
+		Timeout:        timeout,
+		SampleCount:    sampleCount,
+		SampleInterval: sampleInterval,
+		Enabled:        enabled,
 	}, f.index, nil
 }
 

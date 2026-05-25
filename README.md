@@ -7,10 +7,11 @@
 - TCP connect latency probes.
 - UDP send/read probes. A UDP timeout is reported as `sent_no_reply`, because UDP does not provide a generic handshake.
 - QUIC handshake latency probes.
+- Probe rounds with configurable sample count and sample interval.
 - JSONL record storage.
 - One-shot `run` command and interactive terminal menu.
 - Probe creation, editing, deletion, enable/disable, status/log, and program settings views.
-- Lightweight ASCII latency charts in the terminal result view.
+- Lightweight ASCII latency charts for realtime and historical windows.
 
 ## Build
 
@@ -23,13 +24,13 @@ go build ./cmd/vpings
 Run a short probe set:
 
 ```bash
-go run ./cmd/vpings run --target cloudflare.com --tcp 80,443 --udp 53 --quic 443 --count 3
+go run ./cmd/vpings run --target dns.alidns.com --tcp 443 --udp 53 --quic 853 --count 3
 ```
 
 Open the terminal watch view:
 
 ```bash
-go run ./cmd/vpings watch --target cloudflare.com --tcp 443 --quic 443 --interval 2s
+go run ./cmd/vpings watch --target dns.alidns.com --tcp 443 --quic 853 --interval 2s
 ```
 
 Open the full interactive menu:
@@ -38,17 +39,33 @@ Open the full interactive menu:
 go run ./cmd/vpings app
 ```
 
+The default app probes target AliDNS at `dns.alidns.com`.
+
 Menu keys:
 
 ```text
 1-4             switch views
 tab/left/right  switch views
 r               run enabled probes now
+up/down         select a probe in the result view
+enter/esc       open or close a probe detail view
 n/e/d/space     create, edit, delete, enable/disable probes
 a               toggle auto-start in program settings
 h               write help guidance into logs
 u               write update guidance into logs
 q               quit
+```
+
+Result charts:
+
+```text
+Overview        realtime chart for the selected probe
+Detail          realtime, past 24 hours, past 2 days, past week
+X axis          sample round time
+Y axis          latency in milliseconds
+Main line       median latency for each sample round
+Range lines     min and max latency from that round
+Color           loss rate, green to red
 ```
 
 Records are written to:

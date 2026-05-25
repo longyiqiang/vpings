@@ -5,18 +5,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/longyiqiang/vpings/internal/appconfig"
 	"github.com/longyiqiang/vpings/internal/probe"
 )
 
-func TestRenderLatencyCharts(t *testing.T) {
+func TestRenderProbeDetailCharts(t *testing.T) {
 	now := time.Now()
+	item := appconfig.ProbeConfig{
+		ID:       "tcp-example-443",
+		Name:     "Example TCP",
+		Protocol: probe.ProtocolTCP,
+		Host:     "example.com",
+		Port:     443,
+	}
 	results := []probe.Result{
-		{StartedAt: now, Protocol: probe.ProtocolTCP, Host: "example.com", Port: 443, Duration: 10 * time.Millisecond},
-		{StartedAt: now.Add(time.Second), Protocol: probe.ProtocolTCP, Host: "example.com", Port: 443, Duration: 20 * time.Millisecond},
+		{StartedAt: now, RoundID: "round-1", ProbeID: item.ID, ProbeName: item.Name, Protocol: item.Protocol, Host: item.Host, Port: item.Port, Status: probe.StatusOK, Duration: 10 * time.Millisecond, Attempt: 1, Attempts: 3},
+		{StartedAt: now.Add(100 * time.Millisecond), RoundID: "round-1", ProbeID: item.ID, ProbeName: item.Name, Protocol: item.Protocol, Host: item.Host, Port: item.Port, Status: probe.StatusOK, Duration: 20 * time.Millisecond, Attempt: 2, Attempts: 3},
+		{StartedAt: now.Add(200 * time.Millisecond), RoundID: "round-1", ProbeID: item.ID, ProbeName: item.Name, Protocol: item.Protocol, Host: item.Host, Port: item.Port, Status: probe.StatusFailed, Duration: time.Second, Attempt: 3, Attempts: 3},
 	}
 
-	chart := RenderLatencyCharts(results)
-	if !strings.Contains(chart, "tcp example.com:443 ms") {
+	chart := RenderProbeDetailCharts(item, results, now)
+	if !strings.Contains(chart, "median 15.0ms") {
 		t.Fatalf("expected chart caption, got:\n%s", chart)
+	}
+	if !strings.Contains(chart, "loss 33%") {
+		t.Fatalf("expected loss summary, got:\n%s", chart)
 	}
 }

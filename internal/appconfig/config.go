@@ -18,13 +18,15 @@ type Config struct {
 }
 
 type ProbeConfig struct {
-	ID       string         `json:"id"`
-	Name     string         `json:"name"`
-	Protocol probe.Protocol `json:"protocol"`
-	Host     string         `json:"host"`
-	Port     int            `json:"port"`
-	Timeout  time.Duration  `json:"timeout"`
-	Enabled  bool           `json:"enabled"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Protocol       probe.Protocol `json:"protocol"`
+	Host           string         `json:"host"`
+	Port           int            `json:"port"`
+	Timeout        time.Duration  `json:"timeout"`
+	SampleCount    int            `json:"sample_count"`
+	SampleInterval time.Duration  `json:"sample_interval"`
+	Enabled        bool           `json:"enabled"`
 }
 
 func Default() Config {
@@ -33,9 +35,9 @@ func Default() Config {
 		DefaultTimeout: 3 * time.Second,
 		AutoStart:      false,
 		Probes: []ProbeConfig{
-			{ID: "tcp-cloudflare-443", Name: "Cloudflare TCP 443", Protocol: probe.ProtocolTCP, Host: "cloudflare.com", Port: 443, Timeout: 3 * time.Second, Enabled: true},
-			{ID: "udp-cloudflare-53", Name: "Cloudflare UDP 53", Protocol: probe.ProtocolUDP, Host: "cloudflare.com", Port: 53, Timeout: 3 * time.Second, Enabled: true},
-			{ID: "quic-cloudflare-443", Name: "Cloudflare QUIC 443", Protocol: probe.ProtocolQUIC, Host: "cloudflare.com", Port: 443, Timeout: 3 * time.Second, Enabled: true},
+			{ID: "tcp-alidns-443", Name: "AliDNS TCP 443", Protocol: probe.ProtocolTCP, Host: "dns.alidns.com", Port: 443, Timeout: 3 * time.Second, SampleCount: 5, SampleInterval: 200 * time.Millisecond, Enabled: true},
+			{ID: "udp-alidns-53", Name: "AliDNS UDP 53", Protocol: probe.ProtocolUDP, Host: "dns.alidns.com", Port: 53, Timeout: 3 * time.Second, SampleCount: 5, SampleInterval: 200 * time.Millisecond, Enabled: true},
+			{ID: "quic-alidns-853", Name: "AliDNS QUIC 853", Protocol: probe.ProtocolQUIC, Host: "dns.alidns.com", Port: 853, Timeout: 3 * time.Second, SampleCount: 5, SampleInterval: 200 * time.Millisecond, Enabled: true},
 		},
 	}
 }
@@ -61,6 +63,7 @@ func Load(path string) (Config, error) {
 		return cfg, err
 	}
 	cfg.normalize()
+	cfg.migrateCloudflareDefaults()
 	return cfg, nil
 }
 
@@ -78,18 +81,27 @@ func Save(path string, cfg Config) error {
 
 func (c *Config) EnabledSpecs() []probe.Spec {
 	specs := make([]probe.Spec, 0, len(c.Probes))
-	for _, item := range c.Probes {
-		if !item.Enabled {
-			continue
-		}
+	for _, item := range c.EnabledProbes() {
 		specs = append(specs, item.Spec())
 	}
 	return specs
 }
 
+func (c *Config) EnabledProbes() []ProbeConfig {
+	probes := make([]ProbeConfig, 0, len(c.Probes))
+	for _, item := range c.Probes {
+		if item.Enabled {
+			probes = append(probes, item)
+		}
+	}
+	return probes
+}
+
 func (p ProbeConfig) Spec() probe.Spec {
 	return probe.Spec{
 		Protocol: p.Protocol,
+		ID:       p.ID,
+		Name:     p.Name,
 		Host:     p.Host,
 		Port:     p.Port,
 		Timeout:  p.Timeout,
@@ -117,5 +129,23 @@ func (c *Config) normalize() {
 		if c.Probes[i].Timeout <= 0 {
 			c.Probes[i].Timeout = c.DefaultTimeout
 		}
+		if c.Probes[i].SampleCount <= 0 {
+			c.Probes[i].SampleCount = 5
+		}
+		if c.Probes[i].SampleInterval <= 0 {
+			c.Probes[i].SampleInterval = 200 * time.Millisecond
+		}
 	}
+}
+
+func (c *Config) migrateCloudflareDefaults() {
+	if len(c.Probes) != 3 {
+		return
+	}
+	for _, item := range c.Probes {
+		if item.Host != "cloudflare.com" {
+			return
+		}
+	}
+	c.Probes = Default().Probes
 }

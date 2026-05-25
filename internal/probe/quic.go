@@ -14,7 +14,7 @@ func probeQUIC(ctx context.Context, spec Spec) error {
 	conn, err := quic.DialAddr(ctx, addr, &tls.Config{
 		ServerName:         spec.Host,
 		InsecureSkipVerify: true,
-		NextProtos:         []string{"h3", "hq-29"},
+		NextProtos:         []string{"doq", "h3", "hq-29"},
 	}, &quic.Config{
 		HandshakeIdleTimeout: spec.Timeout,
 		MaxIdleTimeout:       spec.Timeout,

@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/longyiqiang/vpings/internal/appconfig"
 	"github.com/longyiqiang/vpings/internal/probe"
 	"github.com/longyiqiang/vpings/internal/store"
 	"github.com/longyiqiang/vpings/internal/ui"
@@ -32,6 +33,8 @@ func run(args []string) error {
 	}
 
 	switch args[1] {
+	case "app", "menu":
+		return runApp(args[2:])
 	case "run":
 		return runProbe(args[2:])
 	case "watch":
@@ -42,6 +45,38 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[1])
 	}
+}
+
+func runApp(args []string) error {
+	fs := flag.NewFlagSet("app", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	configPath := appconfig.DefaultPath()
+	storePath := defaultStorePath()
+	fs.StringVar(&configPath, "config", configPath, "app config path")
+	fs.StringVar(&storePath, "store", storePath, "JSONL record path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := appconfig.Load(configPath)
+	if err != nil {
+		return err
+	}
+	recorder, err := store.OpenJSONL(storePath)
+	if err != nil {
+		return err
+	}
+	defer recorder.Close()
+
+	history, err := store.ReadRecent(storePath, 80)
+	if err != nil {
+		return err
+	}
+
+	model := ui.NewAppModel(cfg, configPath, storePath, recorder, history)
+	_, err = tea.NewProgram(model, tea.WithAltScreen()).Run()
+	return err
 }
 
 func runProbe(args []string) error {
@@ -201,10 +236,12 @@ func printUsage(name string) {
 	fmt.Fprintf(os.Stderr, `vpings probes TCP, UDP, and QUIC latency.
 
 Usage:
+  %[1]s app
   %[1]s run --target HOST --tcp 80,443 --udp 53 --quic 443
   %[1]s watch --target HOST --tcp 443 --quic 443
 
 Commands:
+  app      open the interactive menu
   run      run finite probes and print a table
   watch    open an interactive refreshing terminal view
 `, name)

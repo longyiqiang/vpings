@@ -10,6 +10,7 @@
 - JSONL record storage.
 - One-shot `run` command and interactive terminal menu.
 - Probe creation, editing, deletion, enable/disable, status/log, and program settings views.
+- Lightweight ASCII latency charts in the terminal result view.
 
 ## Build
 
@@ -73,6 +74,6 @@ go run ./cmd/vpings run --target 1.1.1.1 --udp 53 --store ./records.jsonl
 - Release binaries for Linux, macOS, and Windows Server.
 - Install scripts for `curl | sh`, Homebrew, and PowerShell.
 - Historical query and aggregation commands.
-- Richer TUI charts for latency, loss, and protocol comparison.
+- Loss and protocol comparison charts.
 - OS-specific auto-start registration.
 - Optional SQLite or embedded KV storage backend.

@@ -288,7 +288,7 @@ func (m AppModel) viewResults() string {
 	if len(m.results) > 18 {
 		start = len(m.results) - 18
 	}
-	return RenderResults(m.results[start:])
+	return RenderLatencyCharts(m.results) + "\n\n" + RenderResults(m.results[start:])
 }
 
 func (m AppModel) viewStatus() string {

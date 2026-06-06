@@ -3,12 +3,33 @@ package store
 import (
 	"bufio"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/longyiqiang/vpings/internal/probe"
 )
+
+type probeRecord struct {
+	StartedAt    time.Time      `json:"started_at"`
+	RoundID      string         `json:"round_id,omitempty"`
+	ProbeID      string         `json:"probe_id,omitempty"`
+	ProbeName    string         `json:"probe_name,omitempty"`
+	Attempt      int            `json:"attempt,omitempty"`
+	AttemptCount int            `json:"attempt_count,omitempty"`
+	Protocol     probe.Protocol `json:"protocol"`
+	Host         string         `json:"host"`
+	Port         int            `json:"port"`
+	Status       probe.Status   `json:"status"`
+	DurationMS   float64        `json:"duration_ms"`
+	Error        string         `json:"error,omitempty"`
+	Description  string         `json:"description,omitempty"`
+
+	LegacyDuration time.Duration `json:"duration,omitempty"`
+	LegacyAttempts int           `json:"attempts,omitempty"`
+}
 
 type JSONL struct {
 	mu   sync.Mutex
@@ -31,7 +52,7 @@ func (j *JSONL) Append(result probe.Result) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	data, err := json.Marshal(result)
+	data, err := json.Marshal(recordFromResult(result))
 	if err != nil {
 		return err
 	}
@@ -62,11 +83,11 @@ func ReadRecent(path string, limit int) ([]probe.Result, error) {
 	var results []probe.Result
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		var result probe.Result
-		if err := json.Unmarshal(scanner.Bytes(), &result); err != nil {
+		var record probeRecord
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
 			continue
 		}
-		results = append(results, result)
+		results = append(results, record.result())
 		if limit > 0 && len(results) > limit {
 			results = results[len(results)-limit:]
 		}
@@ -75,4 +96,59 @@ func ReadRecent(path string, limit int) ([]probe.Result, error) {
 		return nil, err
 	}
 	return results, nil
+}
+
+func recordFromResult(result probe.Result) probeRecord {
+	return probeRecord{
+		StartedAt:    result.StartedAt,
+		RoundID:      result.RoundID,
+		ProbeID:      result.ProbeID,
+		ProbeName:    result.ProbeName,
+		Attempt:      result.Attempt,
+		AttemptCount: result.Attempts,
+		Protocol:     result.Protocol,
+		Host:         result.Host,
+		Port:         result.Port,
+		Status:       result.Status,
+		DurationMS:   durationToMilliseconds(result.Duration),
+		Error:        result.Error,
+		Description:  result.Description,
+	}
+}
+
+func (r probeRecord) result() probe.Result {
+	duration := millisecondsToDuration(r.DurationMS)
+	if duration == 0 && r.LegacyDuration > 0 {
+		duration = r.LegacyDuration
+	}
+	attemptCount := r.AttemptCount
+	if attemptCount == 0 {
+		attemptCount = r.LegacyAttempts
+	}
+	return probe.Result{
+		StartedAt:   r.StartedAt,
+		RoundID:     r.RoundID,
+		ProbeID:     r.ProbeID,
+		ProbeName:   r.ProbeName,
+		Attempt:     r.Attempt,
+		Attempts:    attemptCount,
+		Protocol:    r.Protocol,
+		Host:        r.Host,
+		Port:        r.Port,
+		Status:      r.Status,
+		Duration:    duration,
+		Error:       r.Error,
+		Description: r.Description,
+	}
+}
+
+func durationToMilliseconds(value time.Duration) float64 {
+	return float64(value) / float64(time.Millisecond)
+}
+
+func millisecondsToDuration(value float64) time.Duration {
+	if value <= 0 {
+		return 0
+	}
+	return time.Duration(math.Round(value * float64(time.Millisecond)))
 }

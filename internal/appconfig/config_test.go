@@ -1,6 +1,7 @@
 package appconfig
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,12 @@ func TestDefaultProbeCadence(t *testing.T) {
 	}
 }
 
+func TestDefaultPathUsesCurrentDirectory(t *testing.T) {
+	if DefaultPath() != "vpings.json" {
+		t.Fatalf("DefaultPath() = %q, want vpings.json", DefaultPath())
+	}
+}
+
 func TestDefaultIncludesICMPProbe(t *testing.T) {
 	cfg := Default()
 	for _, item := range cfg.Probes {
@@ -36,6 +43,29 @@ func TestDefaultIncludesICMPProbe(t *testing.T) {
 		}
 	}
 	t.Fatal("default config does not include AliDNS ICMP probe")
+}
+
+func TestNormalizeRegeneratesStaleGeneratedProbeID(t *testing.T) {
+	cfg := Config{
+		ProbeInterval:         DefaultProbeInterval,
+		DefaultTimeout:        DefaultProbeTimeout,
+		DefaultSampleCount:    DefaultSampleCount,
+		DefaultSampleInterval: DefaultSampleInterval,
+		Probes: []ProbeConfig{
+			{
+				ID:       "icmp-dns.alidns.com-0-1779765480",
+				Name:     "cf",
+				Protocol: probe.ProtocolTCP,
+				Host:     "1.1.1.1",
+				Port:     443,
+			},
+		},
+	}
+
+	cfg.normalize()
+	if got := cfg.Probes[0].ID; !strings.HasPrefix(got, "tcp-1.1.1.1-443-") {
+		t.Fatalf("ID = %q, want tcp-1.1.1.1-443-*", got)
+	}
 }
 
 func TestMigrateFastAliDNSDefaultsRemovesSampleDelay(t *testing.T) {

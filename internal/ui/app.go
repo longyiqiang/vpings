@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,6 +41,8 @@ type AppModel struct {
 	probeIndex       int
 	resultProbeIndex int
 	resultDetail     bool
+	detailChartIndex int
+	detailWindows    [detailChartCount]time.Duration
 	setting          int
 	startedAt        time.Time
 	lastRun          time.Time
@@ -50,14 +53,15 @@ type AppModel struct {
 
 func NewAppModel(cfg appconfig.Config, configPath, storePath string, recorder Recorder, history []probe.Result) AppModel {
 	return AppModel{
-		cfg:        cfg,
-		configPath: configPath,
-		storePath:  storePath,
-		recorder:   recorder,
-		results:    history,
-		logs:       []string{fmt.Sprintf("app started, loaded %d historical records", len(history))},
-		active:     viewResults,
-		startedAt:  time.Now(),
+		cfg:           cfg,
+		configPath:    configPath,
+		storePath:     storePath,
+		recorder:      recorder,
+		results:       history,
+		logs:          []string{fmt.Sprintf("app started, loaded %d historical records", len(history))},
+		active:        viewResults,
+		startedAt:     time.Now(),
+		detailWindows: defaultDetailChartWindows(),
 	}
 }
 
@@ -98,7 +102,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.cfg.EnabledProbes()) == 0 {
 			return m, nil
 		}
-		return m, waitTick(m.cfg.ProbeInterval)
+		return m, waitTick(nextRoundDelay(msg, m.cfg.ProbeInterval, time.Now()))
 	case tickMsg:
 		if len(m.cfg.EnabledProbes()) == 0 {
 			return m, nil
@@ -158,6 +162,9 @@ func (m AppModel) updateResultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.resultProbeIndex >= len(enabled) {
 		m.resultProbeIndex = len(enabled) - 1
 	}
+	if m.resultDetail {
+		return m.updateDetailKeys(msg)
+	}
 	switch msg.String() {
 	case "esc":
 		m.resultDetail = false
@@ -175,6 +182,28 @@ func (m AppModel) updateResultKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m AppModel) updateDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.resultDetail = false
+	case "up", "k":
+		if m.detailChartIndex > 0 {
+			m.detailChartIndex--
+		}
+	case "down", "j":
+		if m.detailChartIndex < detailChartCount-1 {
+			m.detailChartIndex++
+		}
+	case "+", "=":
+		m.detailWindows[m.detailChartIndex] = zoomDetailWindow(m.detailChartIndex, m.detailWindows[m.detailChartIndex], true)
+	case "-", "_":
+		m.detailWindows[m.detailChartIndex] = zoomDetailWindow(m.detailChartIndex, m.detailWindows[m.detailChartIndex], false)
+	case "0":
+		m.detailWindows[m.detailChartIndex] = detailChartDefaultWindow(m.detailChartIndex)
+	}
+	return m, nil
+}
+
 func (m AppModel) updateProbeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
@@ -187,7 +216,6 @@ func (m AppModel) updateProbeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		m.form = newProbeForm(appconfig.ProbeConfig{
-			ID:             appconfig.NewProbeID(probe.ProtocolICMP, "dns.alidns.com", 0),
 			Name:           "New ICMP Probe",
 			Protocol:       probe.ProtocolICMP,
 			Host:           "dns.alidns.com",
@@ -378,7 +406,7 @@ func (m AppModel) viewResults() string {
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render("up/down select probe | enter detail | r run now"))
 	b.WriteString("\n\n")
-	b.WriteString(RenderRealtimeProbeChart(selected, m.results, m.cfg.ProbeInterval))
+	b.WriteString(RenderRealtimeProbeChart(selected, m.results, detailChartDefaultWindow(detailChartRealtime)))
 	b.WriteString("\n\n")
 	b.WriteString(headerStyle.Render("Probes"))
 	b.WriteString("\n")
@@ -399,9 +427,9 @@ func (m AppModel) viewProbeDetail(item appconfig.ProbeConfig) string {
 	var b strings.Builder
 	b.WriteString(headerStyle.Render(item.Name))
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render("esc back | r run now"))
+	b.WriteString(mutedStyle.Render("up/down select chart | +/- zoom | 0 reset | esc back | r run now"))
 	b.WriteString("\n\n")
-	b.WriteString(RenderProbeDetailCharts(item, m.results, time.Now(), m.cfg.ProbeInterval))
+	b.WriteString(RenderProbeDetailCharts(item, m.results, time.Now(), m.detailWindows, m.detailChartIndex))
 	return b.String()
 }
 
@@ -528,24 +556,56 @@ func (m *AppModel) saveConfig(message string) {
 
 func runConfiguredRound(probes []appconfig.ProbeConfig) tea.Cmd {
 	return func() tea.Msg {
-		results := make([]probe.Result, 0)
-		for _, item := range probes {
-			roundID := fmt.Sprintf("%s-%d", item.ID, time.Now().UnixNano())
-			for attempt := 1; attempt <= item.SampleCount; attempt++ {
-				result := probe.Run(context.Background(), item.Spec())
-				result.RoundID = roundID
-				result.ProbeID = item.ID
-				result.ProbeName = item.Name
-				result.Attempt = attempt
-				result.Attempts = item.SampleCount
-				results = append(results, result)
-				if attempt < item.SampleCount && item.SampleInterval > 0 {
-					time.Sleep(item.SampleInterval)
-				}
-			}
-		}
-		return resultsMsg(results)
+		return resultsMsg(runConfiguredProbeRound(probes, probe.Run))
 	}
+}
+
+type probeRunner func(context.Context, probe.Spec) probe.Result
+
+func runConfiguredProbeRound(probes []appconfig.ProbeConfig, runner probeRunner) []probe.Result {
+	perProbe := make([][]probe.Result, len(probes))
+	roundID := newRoundID(time.Now())
+	var wg sync.WaitGroup
+	wg.Add(len(probes))
+	for i, item := range probes {
+		i, item := i, item
+		go func() {
+			defer wg.Done()
+			perProbe[i] = runConfiguredProbeSamples(item, runner, roundID)
+		}()
+	}
+	wg.Wait()
+
+	total := 0
+	for _, results := range perProbe {
+		total += len(results)
+	}
+	merged := make([]probe.Result, 0, total)
+	for _, results := range perProbe {
+		merged = append(merged, results...)
+	}
+	return merged
+}
+
+func runConfiguredProbeSamples(item appconfig.ProbeConfig, runner probeRunner, roundID string) []probe.Result {
+	results := make([]probe.Result, 0, item.SampleCount)
+	for attempt := 1; attempt <= item.SampleCount; attempt++ {
+		result := runner(context.Background(), item.Spec())
+		result.RoundID = roundID
+		result.ProbeID = item.ID
+		result.ProbeName = item.Name
+		result.Attempt = attempt
+		result.Attempts = item.SampleCount
+		results = append(results, result)
+		if attempt < item.SampleCount && item.SampleInterval > 0 {
+			time.Sleep(item.SampleInterval)
+		}
+	}
+	return results
+}
+
+func newRoundID(startedAt time.Time) string {
+	return "round-" + startedAt.Format("20060102-150405.000000000")
 }
 
 func tailStrings(values []string, limit int) []string {

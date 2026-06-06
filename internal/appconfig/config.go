@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/longyiqiang/vpings/internal/probe"
@@ -55,11 +57,7 @@ func Default() Config {
 }
 
 func DefaultPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "config.json"
-	}
-	return filepath.Join(home, ".vpings", "config.json")
+	return "vpings.json"
 }
 
 func Load(path string) (Config, error) {
@@ -82,8 +80,10 @@ func Load(path string) (Config, error) {
 
 func Save(path string, cfg Config) error {
 	cfg.normalize()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -122,7 +122,20 @@ func (p ProbeConfig) Spec() probe.Spec {
 }
 
 func NewProbeID(protocol probe.Protocol, host string, port int) string {
-	return fmt.Sprintf("%s-%s-%d-%d", protocol, host, port, time.Now().Unix())
+	return fmt.Sprintf("%s%d", probeIDPrefix(protocol, host, port), time.Now().Unix())
+}
+
+func probeIDPrefix(protocol probe.Protocol, host string, port int) string {
+	return fmt.Sprintf("%s-%s-%d-", protocol, host, port)
+}
+
+func isGeneratedProbeID(value string) bool {
+	index := strings.LastIndex(value, "-")
+	if index < 0 || index == len(value)-1 {
+		return false
+	}
+	timestamp, err := strconv.ParseInt(value[index+1:], 10, 64)
+	return err == nil && timestamp >= 1_000_000_000
 }
 
 func (c *Config) normalize() {
@@ -139,7 +152,8 @@ func (c *Config) normalize() {
 		c.DefaultSampleInterval = DefaultSampleInterval
 	}
 	for i := range c.Probes {
-		if c.Probes[i].ID == "" {
+		expectedPrefix := probeIDPrefix(c.Probes[i].Protocol, c.Probes[i].Host, c.Probes[i].Port)
+		if c.Probes[i].ID == "" || (isGeneratedProbeID(c.Probes[i].ID) && !strings.HasPrefix(c.Probes[i].ID, expectedPrefix)) {
 			c.Probes[i].ID = NewProbeID(c.Probes[i].Protocol, c.Probes[i].Host, c.Probes[i].Port)
 		}
 		if c.Probes[i].Name == "" {

@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -184,6 +183,8 @@ func buildSpecs(target string, timeout time.Duration, icmpEnabled bool, tcpPorts
 	if icmpEnabled {
 		specs = append(specs, probe.Spec{
 			Protocol: probe.ProtocolICMP,
+			ID:       appconfig.NewProbeID(probe.ProtocolICMP, target, 0),
+			Name:     fmt.Sprintf("%s %s", probe.ProtocolICMP, target),
 			Host:     target,
 			Timeout:  timeout,
 		})
@@ -203,6 +204,8 @@ func buildSpecs(target string, timeout time.Duration, icmpEnabled bool, tcpPorts
 		for _, port := range parsed {
 			specs = append(specs, probe.Spec{
 				Protocol: item.protocol,
+				ID:       appconfig.NewProbeID(item.protocol, target, port),
+				Name:     fmt.Sprintf("%s %s:%d", item.protocol, target, port),
 				Host:     target,
 				Port:     port,
 				Timeout:  timeout,
@@ -234,11 +237,7 @@ func parsePorts(value string) ([]int, error) {
 }
 
 func defaultStorePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "records.jsonl"
-	}
-	return filepath.Join(home, ".vpings", "records.jsonl")
+	return "records.jsonl"
 }
 
 func printUsage(name string) {

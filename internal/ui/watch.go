@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/longyiqiang/vpings/internal/appconfig"
 	"github.com/longyiqiang/vpings/internal/probe"
 )
 
@@ -62,7 +64,7 @@ func (m WatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.results) > 120 {
 			m.results = m.results[len(m.results)-120:]
 		}
-		return m, waitTick(m.interval)
+		return m, waitTick(nextRoundDelay(msg, m.interval, time.Now()))
 	case tickMsg:
 		return m, runRound(m.specs)
 	case errMsg:
@@ -100,12 +102,55 @@ func waitTick(interval time.Duration) tea.Cmd {
 	})
 }
 
+func nextRoundDelay(results []probe.Result, interval time.Duration, now time.Time) time.Duration {
+	if interval <= 0 {
+		return 0
+	}
+	if len(results) == 0 {
+		return interval
+	}
+	start := results[0].StartedAt
+	for _, result := range results[1:] {
+		if result.StartedAt.IsZero() {
+			continue
+		}
+		if start.IsZero() || result.StartedAt.Before(start) {
+			start = result.StartedAt
+		}
+	}
+	if start.IsZero() || now.Before(start) {
+		return interval
+	}
+	elapsed := now.Sub(start)
+	if elapsed >= interval {
+		return 0
+	}
+	return interval - elapsed
+}
+
 func runRound(specs []probe.Spec) tea.Cmd {
 	return func() tea.Msg {
-		results := make([]probe.Result, 0, len(specs))
-		for _, spec := range specs {
-			results = append(results, probe.Run(context.Background(), spec))
-		}
-		return resultsMsg(results)
+		return resultsMsg(runSpecRound(specs, probe.Run))
 	}
+}
+
+func runSpecRound(specs []probe.Spec, runner probeRunner) []probe.Result {
+	results := make([]probe.Result, len(specs))
+	roundID := newRoundID(time.Now())
+	var wg sync.WaitGroup
+	wg.Add(len(specs))
+	for i, spec := range specs {
+		i, spec := i, spec
+		go func() {
+			defer wg.Done()
+			result := runner(context.Background(), spec)
+			result.RoundID = roundID
+			if result.ProbeID == "" {
+				result.ProbeID = appconfig.NewProbeID(spec.Protocol, spec.Host, spec.Port)
+			}
+			results[i] = result
+		}()
+	}
+	wg.Wait()
+	return results
 }

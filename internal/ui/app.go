@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/longyiqiang/vpings/internal/appconfig"
 	"github.com/longyiqiang/vpings/internal/probe"
@@ -49,6 +50,8 @@ type AppModel struct {
 	form             *probeForm
 	defaultsForm     *probeDefaultsForm
 	err              error
+	width            int
+	height           int
 }
 
 func NewAppModel(cfg appconfig.Config, configPath, storePath string, recorder Recorder, history []probe.Result) AppModel {
@@ -62,6 +65,8 @@ func NewAppModel(cfg appconfig.Config, configPath, storePath string, recorder Re
 		active:        viewResults,
 		startedAt:     time.Now(),
 		detailWindows: defaultDetailChartWindows(),
+		width:         defaultTermWidth,
+		height:        defaultTermHeight,
 	}
 }
 
@@ -73,6 +78,11 @@ func (m AppModel) Init() tea.Cmd {
 }
 
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = size.Width
+		m.height = size.Height
+		return m, nil
+	}
 	if m.form != nil {
 		return m.updateForm(msg)
 	}
@@ -385,6 +395,11 @@ func (m AppModel) renderFrame(body string) string {
 	b.WriteString(body)
 	b.WriteString("\n\n")
 	b.WriteString(mutedStyle.Render("1-4 switch | tab/arrow switch | r run now | q quit"))
+	// Lines wider than the terminal wrap and break bubbletea's redraw, which
+	// leaves stale text on screen, so clip every line to the terminal width.
+	if m.width > 0 {
+		return lipgloss.NewStyle().MaxWidth(m.width).Render(b.String())
+	}
 	return b.String()
 }
 
@@ -406,7 +421,7 @@ func (m AppModel) viewResults() string {
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render("up/down select probe | enter detail | r run now"))
 	b.WriteString("\n\n")
-	b.WriteString(RenderRealtimeProbeChart(selected, m.results, detailChartDefaultWindow(detailChartRealtime)))
+	b.WriteString(RenderRealtimeProbeChart(selected, m.results, time.Now(), m.detailWindows[detailChartRealtime], m.cfg.ProbeInterval, m.chartWidth(), m.realtimeChartHeight(len(enabled))))
 	b.WriteString("\n\n")
 	b.WriteString(headerStyle.Render("Probes"))
 	b.WriteString("\n")
@@ -429,8 +444,59 @@ func (m AppModel) viewProbeDetail(item appconfig.ProbeConfig) string {
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render("up/down select chart | +/- zoom | 0 reset | esc back | r run now"))
 	b.WriteString("\n\n")
-	b.WriteString(RenderProbeDetailCharts(item, m.results, time.Now(), m.detailWindows, m.detailChartIndex))
+	b.WriteString(RenderProbeDetailCharts(item, m.results, time.Now(), m.detailWindows, m.detailChartIndex, m.detailLayout()))
 	return b.String()
+}
+
+const (
+	defaultTermWidth  = 100
+	defaultTermHeight = 32
+	// Lines used by renderFrame: title, menu, blank above the body and blank + help below it.
+	frameLines = 5
+	// Lines a chart uses besides its plot rows: header, loss row, time axis and time labels.
+	chartChromeLines = 4
+)
+
+func (m AppModel) chartWidth() int {
+	width := m.width - 1
+	if width < 40 {
+		width = 40
+	}
+	return width
+}
+
+// realtimeChartHeight fits the results page: section header, help, blank,
+// chart, blank, "Probes" header and one line per probe.
+func (m AppModel) realtimeChartHeight(probeCount int) int {
+	rows := m.height - frameLines - 3 - chartChromeLines - 2 - probeCount
+	return clampInt(rows, 3, 20)
+}
+
+// detailLayout gives the selected chart most of the screen and keeps the other
+// three as small previews, or header lines only when the terminal is short.
+func (m AppModel) detailLayout() detailChartLayout {
+	layout := detailChartLayout{width: m.chartWidth(), interval: m.cfg.ProbeInterval}
+	// name, help, blank, legend, then a blank line before each of the four charts.
+	fixed := frameLines + 3 + 1 + detailChartCount
+	available := m.height - fixed - detailChartCount*chartChromeLines
+	if available >= 17 {
+		layout.otherHeight = clampInt((available-available/2)/3, 3, 6)
+		layout.selectedHeight = available - 3*layout.otherHeight
+		return layout
+	}
+	// Previews collapse to a single header line each.
+	layout.selectedHeight = clampInt(m.height-fixed-(detailChartCount-1)-chartChromeLines, 3, 40)
+	return layout
+}
+
+func clampInt(value, low, high int) int {
+	if value < low {
+		return low
+	}
+	if value > high {
+		return high
+	}
+	return value
 }
 
 func (m AppModel) viewStatus() string {

@@ -2,8 +2,13 @@ package ui
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/longyiqiang/vpings/internal/appconfig"
 	"github.com/longyiqiang/vpings/internal/probe"
@@ -101,5 +106,34 @@ func TestRunConfiguredProbeRoundRunsProbesConcurrently(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("probe round did not finish")
+	}
+}
+
+func TestAppViewNeverExceedsTerminalWidth(t *testing.T) {
+	cfg := appconfig.Default()
+	item := cfg.Probes[0]
+	now := time.Now()
+	var history []probe.Result
+	for i := 0; i < 30; i++ {
+		history = append(history, probe.Result{
+			StartedAt: now.Add(-time.Duration(i) * 10 * time.Second),
+			RoundID:   fmt.Sprintf("round-%d", i),
+			ProbeID:   item.ID,
+			Protocol:  item.Protocol,
+			Host:      item.Host,
+			Status:    probe.StatusOK,
+			Duration:  time.Duration(1+i%3) * time.Millisecond,
+		})
+	}
+	model := NewAppModel(cfg, "vpings.json", "records.jsonl", nil, history)
+	next, _ := model.Update(tea.WindowSizeMsg{Width: 50, Height: 30})
+	model = next.(AppModel)
+	for _, detail := range []bool{false, true} {
+		model.resultDetail = detail
+		for _, line := range strings.Split(model.View(), "\n") {
+			if w := lipgloss.Width(line); w > 50 {
+				t.Fatalf("detail=%v line width %d > 50: %q", detail, w, line)
+			}
+		}
 	}
 }

@@ -21,7 +21,7 @@
 
 - ICMP Echo 探测。
 - TCP connect 延迟探测。
-- UDP 发送/等待响应探测。UDP 没有通用握手，发送成功但超时未收到响应时记录为 `sent_no_reply`。
+- UDP 按端口发送对应协议的请求并等待匹配的响应：`53` 发送 DNS 查询，`123` 发送 NTP 请求，其他端口发送通用数据报。超时未收到响应时记录为 `sent_no_reply`。
 - QUIC 握手延迟探测。
 - 支持按轮次执行探测，每个探针可配置样本数、样本间隔、超时时间。
 - 探测记录持久化为 JSONL。
@@ -246,7 +246,12 @@ go run ./cmd/vpings watch --target dns.alidns.com --icmp --tcp 443 --interval 10
 
 - ICMP 探测可能受系统权限、内核策略、防火墙或容器网络限制影响。
 - TCP 探测测量的是连接建立耗时，不代表应用层请求耗时。
-- UDP 探测只能确认本地报文发送与是否收到响应，超时无响应会记录为 `sent_no_reply`。
+- UDP 没有通用握手，只有对方能理解的请求才会得到响应，因此探针按端口选择报文：
+  - `53`：DNS 查询 `example.com` 的 A 记录，按事务 ID 匹配响应；`REFUSED` 等错误码同样算作收到响应，并记在 detail 中。
+  - `123`：NTPv4 客户端请求，按 origin timestamp 匹配响应。
+  - 其他端口：发送 `vpings\n`，收到任意响应即成功；多数服务不会回应，超时记为 `sent_no_reply`。
+  - 端口关闭时系统返回 ICMP 不可达，记为 `failed`。
+- 若本机使用 fake-ip / TUN 等会劫持 DNS 的代理，UDP `53` 的结果反映的是本地代理的响应时间，而不是远端 DNS 服务器。
 - QUIC 探测会发起握手，并使用 `InsecureSkipVerify` 跳过证书校验；该工具测量连通性和握手耗时，不用于校验证书可信度。
 - 所有探测结果默认写入本地 `records.jsonl`，不会自动上传。
 
@@ -265,7 +270,8 @@ vpings/
 │   │   ├── probe.go             # 协议枚举、探测规格、结果模型、协议分发入口。
 │   │   ├── icmp.go              # ICMP Echo 探测实现。
 │   │   ├── tcp.go               # TCP connect 探测实现。
-│   │   ├── udp.go               # UDP 发送与响应等待逻辑；超时可标记 sent_no_reply。
+│   │   ├── udp.go               # UDP 按端口选择 DNS / NTP / 通用报文并匹配响应；超时标记 sent_no_reply。
+│   │   ├── udp_test.go          # 用本地 UDP 服务验证 DNS / NTP 响应匹配与超时状态。
 │   │   └── quic.go              # QUIC 握手探测实现。
 │   ├── store/
 │   │   ├── jsonl.go             # JSONL 追加写入、最近记录读取、旧格式兼容。
@@ -403,7 +409,7 @@ add jsonl legacy record tests
 ## 后续开发注意事项
 
 - 探针结果的归组依赖 `RoundID` 与 `ProbeID`，修改 ID 生成或记录格式时要同步检查图表汇总逻辑。
-- UDP 的 `sent_no_reply` 是预期状态，不应简单当作实现失败。
+- UDP 的 `sent_no_reply` 对通用端口是预期状态，不应简单当作实现失败；需要真实延迟的 UDP 服务应在 `internal/probe/udp.go` 的 `udpExchangeForPort` 中增加对应协议的请求与匹配逻辑。
 - `app` 模式中每个探针的一轮包含多个样本，`run` 和 `watch` 的命令行模式目前每轮每个 `Spec` 只执行一次。
 - `auto_start` 目前只是配置字段，真正的系统自启动注册还没有实现。
 - 图表窗口默认值和最小缩放值定义在 `internal/ui/chart.go`（realtime 默认 30 分钟，最小 5 分钟），修改 UI 文案时要同时检查按键提示。
